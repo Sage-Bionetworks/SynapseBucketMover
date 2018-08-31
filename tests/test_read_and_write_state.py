@@ -24,10 +24,10 @@ class Test(unittest.TestCase):
     def testPersistence(self):
         state=SynapseBucketMover.readState(self.dir)
         assert_equal(0, state['filesProcessedCount'])
-        assert_equal([{}], state['treeMarker'])
+        assert_equal([], state['treePageMarker'])
         
         state['filesProcessedCount']=100
-        state['treeMarker']=[{'parentId':'syn123','nextPageToken':'abc'},{'parentId':'syn456','nextPageToken':'def'}]
+        state['treePageMarker']=[{'parentId':'syn123','nextPageToken':'abc'},{'parentId':'syn456','nextPageToken':'def'}]
         SynapseBucketMover.writeState(self.dir, state)
         readState = SynapseBucketMover.readState(self.dir)
         assert_equal(state, readState)

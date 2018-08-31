@@ -7,4 +7,4 @@ COPY . /SynapseBucketMover
 
 WORKDIR /SynapseBucketMover
 
-RUN nosetests tests
+RUN nosetests --nocapture tests
