@@ -5,14 +5,15 @@ This code processes a large tree of Synapse files.  As such it needs to show pro
 handle stopping unexpectedly and being restarted.  It is idempotent and it records its location in the
 file hierarchy ('tree') in order to be able to be restarted.
 
-Created on Aug 30, 2017
+Created on Aug 30, 2018
 
 @author: bhoff
 '''
-import synapseclient
-import argparse
 import json
 import os
+import argparse
+import synapseclient
+import boto3
 
 # state is a dict
 # key:  filesProcessedCount, value:  integer
@@ -33,10 +34,66 @@ def writeState(persistenceFolder, state):
         with open(os.path.join(persistenceFolder.name, 'state.txt'), 'w') as myfile:
             myfile.write(json.dumps(state))
 
+def s3move(srcBucketName, srcKey, dstBucketName, dstKey):
+    # use boto to move (NOT COPY) the file to the new bucket. Use sse=AES256
+    # Turns out that to move you must copy, then delete the original
+    s3Client.copy_object(CopySource={'Bucket': srcBucketName, 'Key': srcKey}, Bucket=dstBucketName, Key=dstKey, ServerSideEncryption='AES256')
+    s3Delete(srcBucketName, srcKey)
+    
+def s3Delete(srcBucketName, srcKey):
+    s3Client.delete_object(Bucket=srcBucketName, Key=srcKey)
 
-def processOneFile(synId):
+def processOneFile(synId, destinationS3Bucket, newStorageLocationId):
     print('Processing '+synId)
-    # TODO add code for processing the file
+
+    entityMeta=None
+    newfh=None
+    handles=syn.restGET("/entity/"+synId+"/filehandles")
+    for i in range(len(handles['list'])):
+        fh=handles['list'][i]
+        if fh['storageLocationId']==newStorageLocationId:
+            print("\tAlready processed "+synId+".  Skipping.")
+            continue
+        if entityMeta is None:
+            entityMeta=syn.restGET("/entity/"+synId)
+            fhid=entityMeta['dataFileHandleId']
+        if fh['id'] == fhid:
+            fhkey = fh[key]
+            slash = fhkey.rfind("/")
+            if slash < 0:
+                raise Exception("Expected a '/' separator in "+fhkey)
+            keyPrefixWithSlash=fhkey[:slash+1]
+            keySuffixNoSlash=fhkey[slash+1:]
+            if keySuffixNoSlash != fh['fileName']:
+                raise Exception("Expected key suffix, "+keySuffixNoSlash+" to match fileName in file handle, "+fh['fileName'])
+            # TODO Use mapping provided by Kenny to define a new file name, which is the suffix of the key
+            newFileName=fh['fileName']
+            newKey = keyPrefixWithSlash+newFileName
+            # move the S3 file to the new bucket, using newKey as the destination
+            s3move(fh['bucket'], fh['key'], destinationS3Bucket, newKey)
+            newfhMeta={}
+            for key in ['contentMd5','contentSize','contentType']:
+                newfhMeta[key]=fh[key]
+            newfhMeta['fileName']=newFileName
+            newfhMeta['key']=newKey
+            newfhMeta['bucketName']=destinationS3Bucket
+            newfhMeta['storageLocationId']=newStorageLocationId
+            # this will trigger the creation of a preview in the new bucket
+            newfh=syn.restPOST('/externalFileHandle/s3',body =json.dumps(newfhMeta), endpoint='https://repo-prod.prod.sagebase.org/file/v1')
+        else:
+            s3Delete(fh['bucket'], fh['key'])
+    
+    if newfh is None:
+        # nothing to do
+        return
+    
+    # Annotate the current file version with 'unavailable'
+    entityMeta['versionLabel']='Unavailable for Download'
+    entityMeta = syn.restPUT("/entity/"+synId, body =json.dumps(entityMeta))
+    # update the file with the new file handle, also changing the entity name to the new file name
+    entityMeta['name']=newfh['fileName']
+    entityMeta['dataFileHandleId']=newfh['id']
+    entityMeta = syn.restPUT("/entity/"+synId, body =json.dumps(entityMeta))
     
 def getChildren(parentId, nextPageToken=None):
     global synapse
@@ -102,21 +159,42 @@ if __name__ == '__main__':
                         help="Synapse password")
     parser.add_argument("-r", "--rootId", required=True, help="ID of root container (project or folder")
     parser.add_argument("-f", "--persistenceFolder", required=True, help="Folder on system in which to persist state")
+    parser.add_argument("-s", "--storageLocationId", required=True, type=int, help="Target storage location id")
+    parser.add_argument("-kid", "--awsKeyId", required=True, help="AWS Key ID")
+    parser.add_argument("-ksec", "--awsKeySecret", required=True, help="AWS Key Secret")
+    parser.add_argument("-m", "--maxNumberToProcess", type=int, help="Maximum number of files to process")
     args = parser.parse_args()
 
     global synapse
     synapse = synapseclient.Synapse()
     synapse = synapseclient.login(args.synapseUser, args.synapsePassword,rememberMe=False)
+    global s3Client
+    s3Client= boto3.client('s3', aws_access_key_id=args.awsKeyId, aws_secret_access_key=args.awsKeySecret)
     
+    dstStorageLocation=syn.restGET("/storageLocation/"+str(args.storageLocationId))
+    if dstStorageLocation['concreteType']!='org.sagebionetworks.repo.model.project.ExternalS3StorageLocationSetting':
+        raise Exception('Expected org.sagebionetworks.repo.model.project.ExternalS3StorageLocationSetting but found '+dstStorageLocation['concreteType'])
+    destinationS3Bucket=dstStorageLocation['bucket'] # TODO do we need to account for dstStorageLocation['baseKey']?
+    
+    state=readState(args.persistenceFolder)
+    if (len(state['treePageMarker'])==0):
+        state['treePageMarker']=[{'parentId':args.rootId, 'nextPageToken':None, 'page':[]}]
+    initialCount=state['filesProcessedCount']
     
     treePageMarker = [{'parentId':args.rootId, 'nextPageToken':None, 'page':[]}]
     
-    while True:
+    counter=0
+    while args.maxNumberToProcess is None or counter<args.maxNumberToProcess:
         result=nextLeaf(treePageMarker, getChildren)
         node=result.get('id')
         if node is None:
             break
-        print(node)
+        processOneFile(node, destinationS3Bucket, args.storageLocationId)
+        counter=counter+1
         treePageMarker=result['treePageMarker']
+        state['filesProcessedCount']=initialCount+counter
+        state['treePageMarker']=treePageMarker
+        writeState(args.persistenceFolder, state)
 
+    print("Processed "+str(counter)+" files.")
 
