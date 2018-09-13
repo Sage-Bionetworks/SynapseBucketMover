@@ -37,28 +37,42 @@ def writeState(persistenceFolder, state):
 def s3move(srcBucketName, srcKey, dstBucketName, dstKey):
     # use boto to move (NOT COPY) the file to the new bucket. Use sse=AES256
     # Turns out that to move you must copy, then delete the original
-    s3Client.copy_object(CopySource={'Bucket': srcBucketName, 'Key': srcKey}, Bucket=dstBucketName, Key=dstKey, ServerSideEncryption='AES256')
+    print("s3move: srcBucketName: "+srcBucketName+", srcKey: "+srcKey+", dstBucketName: "+dstBucketName+", dstKey: "+dstKey)
+    try:
+        s3Client.copy_object(CopySource={'Bucket': srcBucketName, 'Key': srcKey}, Bucket=dstBucketName, Key=dstKey, ServerSideEncryption='AES256')
+    except Exception as e:
+        try:
+            # already copied?
+            s3Resource.Object(dstBucketName, dstKey).load()
+        except:
+            raise e
     s3Delete(srcBucketName, srcKey)
     
 def s3Delete(srcBucketName, srcKey):
-    s3Client.delete_object(Bucket=srcBucketName, Key=srcKey)
+    try:
+        s3Client.delete_object(Bucket=srcBucketName, Key=srcKey)
+    except Exception as e:
+        print("Failed to delete "+srcKey)
 
 def processOneFile(synId, destinationS3Bucket, newStorageLocationId):
     print('Processing '+synId)
 
     entityMeta=None
     newfh=None
-    handles=syn.restGET("/entity/"+synId+"/filehandles")
+    # Step 1, get entity file handles from Synapse
+    handles=synapse.restGET("/entity/"+synId+"/filehandles")
     for i in range(len(handles['list'])):
         fh=handles['list'][i]
-        if fh['storageLocationId']==newStorageLocationId:
+        print("fh: "+str(fh))
+        # previews apparently do not have a storageLocationId
+        if fh.get('storageLocationId')==newStorageLocationId or fh.get('bucketNamne')==destinationS3Bucket:
             print("\tAlready processed "+synId+".  Skipping.")
             continue
         if entityMeta is None:
-            entityMeta=syn.restGET("/entity/"+synId)
+            entityMeta=synapse.restGET("/entity/"+synId)
             fhid=entityMeta['dataFileHandleId']
         if fh['id'] == fhid:
-            fhkey = fh[key]
+            fhkey = fh['key']
             slash = fhkey.rfind("/")
             if slash < 0:
                 raise Exception("Expected a '/' separator in "+fhkey)
@@ -70,7 +84,9 @@ def processOneFile(synId, destinationS3Bucket, newStorageLocationId):
             newFileName=fh['fileName']
             newKey = keyPrefixWithSlash+newFileName
             # move the S3 file to the new bucket, using newKey as the destination
-            s3move(fh['bucket'], fh['key'], destinationS3Bucket, newKey)
+            # print('fh: '+str(fh))
+            # Step 2, move the file in S3
+            s3move(fh['bucketName'], fh['key'], destinationS3Bucket, newKey)
             newfhMeta={}
             for key in ['contentMd5','contentSize','contentType']:
                 newfhMeta[key]=fh[key]
@@ -79,9 +95,9 @@ def processOneFile(synId, destinationS3Bucket, newStorageLocationId):
             newfhMeta['bucketName']=destinationS3Bucket
             newfhMeta['storageLocationId']=newStorageLocationId
             # this will trigger the creation of a preview in the new bucket
-            newfh=syn.restPOST('/externalFileHandle/s3',body =json.dumps(newfhMeta), endpoint='https://repo-prod.prod.sagebase.org/file/v1')
+            newfh=synapse.restPOST('/externalFileHandle/s3',body =json.dumps(newfhMeta), endpoint='https://repo-prod.prod.sagebase.org/file/v1')
         else:
-            s3Delete(fh['bucket'], fh['key'])
+            s3Delete(fh['bucketName'], fh['key'])
     
     if newfh is None:
         # nothing to do
@@ -89,11 +105,12 @@ def processOneFile(synId, destinationS3Bucket, newStorageLocationId):
     
     # Annotate the current file version with 'unavailable'
     entityMeta['versionLabel']='Unavailable for Download'
-    entityMeta = syn.restPUT("/entity/"+synId, body =json.dumps(entityMeta))
+    entityMeta = synapse.restPUT("/entity/"+synId, body =json.dumps(entityMeta))
     # update the file with the new file handle, also changing the entity name to the new file name
     entityMeta['name']=newfh['fileName']
     entityMeta['dataFileHandleId']=newfh['id']
-    entityMeta = syn.restPUT("/entity/"+synId, body =json.dumps(entityMeta))
+    # Step 3, update the FH-ID in Synapse
+    entityMeta = synapse.restPUT("/entity/"+synId, body =json.dumps(entityMeta))
     
 def getChildren(parentId, nextPageToken=None):
     global synapse
@@ -162,6 +179,7 @@ if __name__ == '__main__':
     parser.add_argument("-s", "--storageLocationId", required=True, type=int, help="Target storage location id")
     parser.add_argument("-kid", "--awsKeyId", required=True, help="AWS Key ID")
     parser.add_argument("-ksec", "--awsKeySecret", required=True, help="AWS Key Secret")
+    parser.add_argument("-awstoken", "--awsSessionToken", required=True, help="AWS MFA Session Token")
     parser.add_argument("-m", "--maxNumberToProcess", type=int, help="Maximum number of files to process")
     args = parser.parse_args()
 
@@ -169,9 +187,11 @@ if __name__ == '__main__':
     synapse = synapseclient.Synapse()
     synapse = synapseclient.login(args.synapseUser, args.synapsePassword,rememberMe=False)
     global s3Client
-    s3Client= boto3.client('s3', aws_access_key_id=args.awsKeyId, aws_secret_access_key=args.awsKeySecret)
+    global s3Resource
+    s3Client= boto3.client('s3', aws_access_key_id=args.awsKeyId, aws_secret_access_key=args.awsKeySecret, aws_session_token=args.awsSessionToken)
+    s3Resource = boto3.resource('s3', aws_access_key_id=args.awsKeyId, aws_secret_access_key=args.awsKeySecret, aws_session_token=args.awsSessionToken)
     
-    dstStorageLocation=syn.restGET("/storageLocation/"+str(args.storageLocationId))
+    dstStorageLocation=synapse.restGET("/storageLocation/"+str(args.storageLocationId))
     if dstStorageLocation['concreteType']!='org.sagebionetworks.repo.model.project.ExternalS3StorageLocationSetting':
         raise Exception('Expected org.sagebionetworks.repo.model.project.ExternalS3StorageLocationSetting but found '+dstStorageLocation['concreteType'])
     destinationS3Bucket=dstStorageLocation['bucket'] # TODO do we need to account for dstStorageLocation['baseKey']?
