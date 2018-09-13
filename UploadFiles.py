@@ -12,6 +12,11 @@ import json
 import os
 import tempfile
 
+import random, string
+
+def randomword(length):
+   letters = string.ascii_lowercase
+   return ''.join(random.choice(letters) for i in range(length))
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -41,10 +46,8 @@ if __name__ == '__main__':
             folderCount=folderCount+1
         # create file, upload to folder
         # just make an arbitrary string
-        s=''
-        for j in range(100):
-            s=s+str(i)+' '
-        filePath=os.path.join(tempfile.gettempdir(), str(i)+'.txt')
+        s=randomword(1000)
+        filePath=os.path.join(tempfile.gettempdir(), 'file_'+str(i)+'.txt')
         with open(filePath, 'w') as myfile:
             myfile.write(s)
         file=synapseclient.File(filePath, parent=folder, annotations={'someAnnotName':'someAnnotValue'})
