@@ -24,20 +24,20 @@ import boto3
 #    key:  nextPageToken, value:  token for getting the subsequent page
 def readState(persistenceFolder):
     try:
-        with open(os.path.join(persistenceFolder.name, 'state.txt'), 'r') as myfile:
+        with open(os.path.join(persistenceFolder, 'state.txt'), 'r') as myfile:
             data=myfile.read().replace('\n', '')
         return json.loads(data)
     except:
         return {'filesProcessedCount':0, 'treePageMarker':[]}
 
 def writeState(persistenceFolder, state):
-        with open(os.path.join(persistenceFolder.name, 'state.txt'), 'w') as myfile:
+        with open(os.path.join(persistenceFolder, 'state.txt'), 'w') as myfile:
             myfile.write(json.dumps(state))
 
 def s3move(srcBucketName, srcKey, dstBucketName, dstKey):
     # use boto to move (NOT COPY) the file to the new bucket. Use sse=AES256
     # Turns out that to move you must copy, then delete the original
-    print("s3move: srcBucketName: "+srcBucketName+", srcKey: "+srcKey+", dstBucketName: "+dstBucketName+", dstKey: "+dstKey)
+    # print("s3move: srcBucketName: "+srcBucketName+", srcKey: "+srcKey+", dstBucketName: "+dstBucketName+", dstKey: "+dstKey)
     try:
         s3Client.copy_object(CopySource={'Bucket': srcBucketName, 'Key': srcKey}, Bucket=dstBucketName, Key=dstKey, ServerSideEncryption='AES256')
     except Exception as e:
@@ -63,7 +63,7 @@ def processOneFile(synId, destinationS3Bucket, newStorageLocationId):
     handles=synapse.restGET("/entity/"+synId+"/filehandles")
     for i in range(len(handles['list'])):
         fh=handles['list'][i]
-        print("fh: "+str(fh))
+        # print("fh: "+str(fh))
         # previews apparently do not have a storageLocationId
         if fh.get('storageLocationId')==newStorageLocationId or fh.get('bucketNamne')==destinationS3Bucket:
             print("\tAlready processed "+synId+".  Skipping.")
@@ -101,16 +101,17 @@ def processOneFile(synId, destinationS3Bucket, newStorageLocationId):
     
     if newfh is None:
         # nothing to do
-        return
+        return 0
     
     # Annotate the current file version with 'unavailable'
-    entityMeta['versionLabel']='Unavailable for Download'
+    entityMeta['versionComment']='Unavailable for Download'
     entityMeta = synapse.restPUT("/entity/"+synId, body =json.dumps(entityMeta))
     # update the file with the new file handle, also changing the entity name to the new file name
     entityMeta['name']=newfh['fileName']
     entityMeta['dataFileHandleId']=newfh['id']
     # Step 3, update the FH-ID in Synapse
     entityMeta = synapse.restPUT("/entity/"+synId, body =json.dumps(entityMeta))
+    return 1
     
 def getChildren(parentId, nextPageToken=None):
     global synapse
@@ -201,7 +202,7 @@ if __name__ == '__main__':
         state['treePageMarker']=[{'parentId':args.rootId, 'nextPageToken':None, 'page':[]}]
     initialCount=state['filesProcessedCount']
     
-    treePageMarker = [{'parentId':args.rootId, 'nextPageToken':None, 'page':[]}]
+    treePageMarker = state['treePageMarker']
     
     counter=0
     while args.maxNumberToProcess is None or counter<args.maxNumberToProcess:
@@ -209,8 +210,7 @@ if __name__ == '__main__':
         node=result.get('id')
         if node is None:
             break
-        processOneFile(node, destinationS3Bucket, args.storageLocationId)
-        counter=counter+1
+        counter=counter+processOneFile(node, destinationS3Bucket, args.storageLocationId)
         treePageMarker=result['treePageMarker']
         state['filesProcessedCount']=initialCount+counter
         state['treePageMarker']=treePageMarker

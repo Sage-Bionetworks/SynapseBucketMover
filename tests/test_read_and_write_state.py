@@ -22,14 +22,14 @@ class Test(unittest.TestCase):
 
 
     def testPersistence(self):
-        state=SynapseBucketMover.readState(self.dir)
+        state=SynapseBucketMover.readState(self.dir.name)
         assert_equal(0, state['filesProcessedCount'])
         assert_equal([], state['treePageMarker'])
         
         state['filesProcessedCount']=100
         state['treePageMarker']=[{'parentId':'syn123','nextPageToken':'abc'},{'parentId':'syn456','nextPageToken':'def'}]
-        SynapseBucketMover.writeState(self.dir, state)
-        readState = SynapseBucketMover.readState(self.dir)
+        SynapseBucketMover.writeState(self.dir.name, state)
+        readState = SynapseBucketMover.readState(self.dir.name)
         assert_equal(state, readState)
 
 if __name__ == "__main__":
