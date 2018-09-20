@@ -65,7 +65,7 @@ def processOneFile(synId, destinationS3Bucket, newStorageLocationId):
         fh=handles['list'][i]
         # print("fh: "+str(fh))
         # previews apparently do not have a storageLocationId
-        if fh.get('storageLocationId')==newStorageLocationId or fh.get('bucketNamne')==destinationS3Bucket:
+        if fh.get('storageLocationId')==newStorageLocationId or fh.get('bucketName')==destinationS3Bucket:
             print("\tAlready processed "+synId+".  Skipping.")
             continue
         if entityMeta is None:
