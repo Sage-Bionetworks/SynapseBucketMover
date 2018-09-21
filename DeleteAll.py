@@ -45,6 +45,8 @@ if __name__ == '__main__':
     # TODO take baseKey into account
     client = boto3.client('s3', aws_access_key_id=args.awsKeyId, aws_secret_access_key=args.awsKeySecret, aws_session_token=args.awsSessionToken)
     for bucketName in [args.bucket1, args.bucket2]:
+        if bucketName.endswith("sagebase.org"):
+            raise Exception("Cannot delete content of Synapse bucket ("+bucketName+")")
         print("\nDeleting from bucket "+bucketName)
         for key in client.list_objects(Bucket=bucketName)['Contents']:
             if not key['Key'].endswith("owner.txt"):
