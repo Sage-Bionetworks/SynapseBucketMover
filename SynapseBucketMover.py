@@ -182,7 +182,7 @@ if __name__ == '__main__':
     parser.add_argument("-s", "--storageLocationId", required=True, type=int, help="Target storage location id")
     parser.add_argument("-kid", "--awsKeyId", required=True, help="AWS Key ID")
     parser.add_argument("-ksec", "--awsKeySecret", required=True, help="AWS Key Secret")
-    parser.add_argument("-awstoken", "--awsSessionToken", required=True, help="AWS MFA Session Token")
+    parser.add_argument("-awstoken", "--awsSessionToken", required=False, help="AWS MFA Session Token")
     parser.add_argument("-m", "--maxNumberToProcess", type=int, help="Maximum number of files to process")
     args = parser.parse_args()
 

@@ -1,11 +1,11 @@
 # SynapseBucketMover
 
-Moves Synapse files from one AWS S3 bucket to another.
+Consolidates Synapse files into a specified AWS S3 bucket.
 
 ### What the Bucket Mover does
 
-* The S3 file underlying each Synapse file under the given root container is moved into the bucket indicated by the given storage location.  (Note:  It is assumed that there is just one version of each Synapse file.  The process will stop if an unprocessed Synapse file with multiple versions is found.)
-* The Synapse ID and 'created by' name of each file are unchanged.  The 'modified by' name of each file is that of the account used to run this program.
+* The S3 file underlying each Synapse file under the given root container is moved into the bucket indicated by the given storage location.  (The files could initially be scattered across multiple buckets.) Note:  It is assumed that there is just one version of each Synapse file.  The process will stop if an unprocessed Synapse file with multiple versions is found.
+* The Synapse ID and 'created by' name of each file is unchanged.  The 'modified by' name of each file is that of the account used to run this program.
 * The Synapse organization will not be changed.  All files will remain in their current project/folder hierarchy.
 * On the page for each file you will see that its storage location has been updated.
 * Each file will have a new version.  The previous version is updated with a comment, 'Unavailable for Download'.
