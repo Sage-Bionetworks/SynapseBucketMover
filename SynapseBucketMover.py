@@ -71,6 +71,8 @@ def processOneFile(synId, destinationS3Bucket, newStorageLocationId):
         if entityMeta is None:
             entityMeta=synapse.restGET("/entity/"+synId)
             fhid=entityMeta['dataFileHandleId']
+            if entityMeta['versionNumber']!=1:
+                raise Exception('Expected just one version for each file, but '+synId+' has version '+entityMeta['versionNumber'])
         if fh['id'] == fhid:
             fhkey = fh['key']
             slash = fhkey.rfind("/")
